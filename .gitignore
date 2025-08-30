@@ -1,0 +1,40 @@
+# ---- Go ----
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Output of go build
+/bin/
+/dist/
+/build/
+
+# Go coverage
+*.out
+
+# ---- Logs ----
+*.log
+*.tmp
+
+# ---- IDE/Editor ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- OS files ----
+.DS_Store
+Thumbs.db
+
+# ---- Dependency / Package managers ----
+vendor/
+.godeps/
+.gomodcache/
+
+# ---- GitHub Actions local cache ----
+/.github/workflows/*.tmp
