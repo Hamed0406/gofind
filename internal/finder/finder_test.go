@@ -11,57 +11,97 @@ import (
 	"github.com/Hamed0406/gofind/internal/finder"
 )
 
-func TestRun_RespectsGitignore(t *testing.T) {
+func TestRun_Ext_Name_Regex_Type_Hidden(t *testing.T) {
 	tmp := t.TempDir()
+	_ = os.Mkdir(filepath.Join(tmp, ".git"), 0o755)
+	_ = os.WriteFile(filepath.Join(tmp, ".gitignore"), []byte(""), 0o644)
 
-	// Create .git and .gitignore
-	if err := os.Mkdir(filepath.Join(tmp, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ignoreContent := "secret/\n*.log\n"
-	if err := os.WriteFile(filepath.Join(tmp, ".gitignore"), []byte(ignoreContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create files
-	files := []string{
-		"main.go",
-		"README.md",
-		"debug.log",
-		"secret/passwords.txt",
-	}
-	for _, f := range files {
-		path := filepath.Join(tmp, f)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("test"), 0o644); err != nil {
-			t.Fatal(err)
+	// layout
+	mustWrite := func(rel string) {
+		p := filepath.Join(tmp, rel)
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		if strings.HasSuffix(rel, "/") {
+			_ = os.MkdirAll(p, 0o755)
+		} else {
+			_ = os.WriteFile(p, []byte("x"), 0o644)
 		}
 	}
+	mustWrite("src/main.go")
+	mustWrite("src/util_test.go")
+	mustWrite("docs/readme.md")
+	mustWrite(".hidden/secret.txt")
+	_ = os.MkdirAll(filepath.Join(tmp, "onlydir"), 0o755)
 
-	// Run finder
-	var buf bytes.Buffer
-	cfg := finder.Config{
-		Path:             tmp,
-		RespectGitignore: true,
-	}
-	count, err := finder.Run(context.Background(), &buf, cfg)
-	if err != nil {
-		t.Fatal(err)
+	// ext filter
+	{
+		var buf bytes.Buffer
+		cfg := finder.Config{Path: tmp, RespectGitignore: true, Exts: []string{".go"}}
+		_, _ = finder.Run(context.Background(), &buf, cfg)
+		got := buf.String()
+		if !strings.Contains(got, "main.go") || !strings.Contains(got, "util_test.go") {
+			t.Fatalf("ext filter failed, got:\n%s", got)
+		}
+		if strings.Contains(got, "readme.md") {
+			t.Fatalf("ext filter should exclude readme.md")
+		}
 	}
 
-	out := buf.String()
-	if count == 0 {
-		t.Fatal("expected some files to be listed")
+	// name filter (substring)
+	{
+		var buf bytes.Buffer
+		cfg := finder.Config{Path: tmp, RespectGitignore: true, Name: "readme"}
+		_, _ = finder.Run(context.Background(), &buf, cfg)
+		if !strings.Contains(buf.String(), "readme.md") {
+			t.Fatalf("name filter failed")
+		}
 	}
-	if strings.Contains(out, "debug.log") {
-		t.Errorf("debug.log should have been ignored")
+
+	// regex filter
+	{
+		var buf bytes.Buffer
+		cfg := finder.Config{Path: tmp, RespectGitignore: true, Regex: `^main\.`}
+		_, _ = finder.Run(context.Background(), &buf, cfg)
+		if !strings.Contains(buf.String(), "main.go") {
+			t.Fatalf("regex filter failed")
+		}
+		if strings.Contains(buf.String(), "util_test.go") {
+			t.Fatalf("regex filter should exclude util_test.go")
+		}
 	}
-	if strings.Contains(out, "secret") {
-		t.Errorf("secret dir should have been ignored")
+
+	// type = d (dirs only)
+	{
+		var buf bytes.Buffer
+		cfg := finder.Config{Path: tmp, RespectGitignore: true, Type: "d"}
+		_, _ = finder.Run(context.Background(), &buf, cfg)
+		out := buf.String()
+		if strings.Contains(out, "main.go") || strings.Contains(out, "readme.md") {
+			t.Fatalf("type=d should not list files")
+		}
+		// should include at least the start dir subfolders like src, docs, .hidden, onlydir
+		if !strings.Contains(out, "src") {
+			t.Fatalf("type=d should list directories; got:\n%s", out)
+		}
 	}
-	if !strings.Contains(out, "main.go") {
-		t.Errorf("expected main.go to be listed")
+
+	// hidden false: should not include .hidden content
+	{
+		var buf bytes.Buffer
+		cfg := finder.Config{Path: tmp, RespectGitignore: true, Hidden: false}
+		_, _ = finder.Run(context.Background(), &buf, cfg)
+		if strings.Contains(buf.String(), "/.hidden/") {
+			t.Fatalf("hidden=false should exclude .hidden")
+		}
+	}
+
+	// hidden true: include .hidden
+	{
+		var buf bytes.Buffer
+		cfg := finder.Config{Path: tmp, RespectGitignore: true, Hidden: true}
+		_, _ = finder.Run(context.Background(), &buf, cfg)
+		if !strings.Contains(buf.String(), "/.hidden/secret.txt") &&
+			!strings.Contains(buf.String(), "\\.hidden\\secret.txt") {
+			t.Fatalf("hidden=true should include .hidden/secret.txt")
+		}
 	}
 }

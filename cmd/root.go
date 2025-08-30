@@ -15,6 +15,13 @@ var (
 	flagPath         string
 	flagGitignore    bool
 	flagExtraIgnores []string
+
+	// NEW:
+	flagExts   []string
+	flagName   string
+	flagRegex  string
+	flagType   string // f|d|a
+	flagHidden bool
 )
 
 var rootCmd = &cobra.Command{
@@ -28,6 +35,13 @@ var rootCmd = &cobra.Command{
 			Path:             flagPath,
 			RespectGitignore: flagGitignore,
 			ExtraIgnores:     flagExtraIgnores,
+
+			// NEW:
+			Exts:   flagExts,
+			Name:   flagName,
+			Regex:  flagRegex,
+			Type:   flagType,
+			Hidden: flagHidden,
 		}
 
 		count, err := finder.Run(ctx, os.Stdout, cfg)
@@ -35,7 +49,6 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 		if count == 0 {
-			// useful in CI: non-zero when nothing matched
 			os.Exit(1)
 		}
 		return nil
@@ -53,4 +66,11 @@ func init() {
 	rootCmd.Flags().StringVarP(&flagPath, "path", "p", ".", "start directory")
 	rootCmd.Flags().BoolVar(&flagGitignore, "respect-gitignore", true, "respect .gitignore files")
 	rootCmd.Flags().StringSliceVar(&flagExtraIgnores, "ignore", nil, "extra ignore patterns (repeatable)")
+
+	// NEW:
+	rootCmd.Flags().StringSliceVar(&flagExts, "ext", nil, "filter by extension (repeatable), e.g. --ext .go --ext .yaml")
+	rootCmd.Flags().StringVar(&flagName, "name", "", "substring match on filename")
+	rootCmd.Flags().StringVar(&flagRegex, "regex", "", "regular expression on filename")
+	rootCmd.Flags().StringVar(&flagType, "type", "f", "entry type: f=files, d=dirs, a=all")
+	rootCmd.Flags().BoolVar(&flagHidden, "hidden", false, "include hidden files (dotfiles)")
 }
