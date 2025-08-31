@@ -1,1 +1,56 @@
-#Gofind
+# Gofind
+
+Gofind is a fast cross-platform file finder written in Go. It walks a directory tree and prints entries that match user-defined filters while respecting your project's `.gitignore` file.
+
+## Features
+
+- Respect `.gitignore` files and custom ignore patterns.
+- Filter by file extension, filename substring, or regular expression.
+- Limit results to files, directories, or both.
+- Optionally include hidden files.
+- Works on all major platforms.
+
+## Installation
+
+```bash
+go install github.com/Hamed0406/gofind/cmd/gofind@latest
+```
+
+Or build from source:
+
+```bash
+make build
+```
+
+## Usage
+
+```bash
+gofind [flags]
+```
+
+Key flags:
+
+- `-p, --path` — start directory (default ".").
+- `--respect-gitignore` — honor `.gitignore` files (default true).
+- `--ignore` — extra ignore patterns (repeatable).
+- `--ext` — filter by extension (repeatable), e.g. `--ext .go`.
+- `--name` — substring match on filename.
+- `--regex` — regular expression on filename.
+- `--type` — entry type: `f` = files, `d` = dirs, `a` = all (default `f`).
+- `--hidden` — include hidden files.
+
+Example:
+
+```bash
+gofind --ext .go --name test
+```
+
+## Testing
+
+```bash
+make test
+```
+
+## License
+
+MIT
