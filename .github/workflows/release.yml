@@ -1,0 +1,31 @@
+name: release
+on:
+  push:
+    tags: [ 'v*.*.*' ]   # e.g., v0.1.0
+
+permissions:
+  contents: write  # needed to create GitHub Releases
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # required for changelog & version detection
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: true
+
+      - name: Install GoReleaser
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/goreleaser/goreleaser/main/scripts/install.sh \
+            | sh -s -- -b $HOME/bin v2.3.2
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: goreleaser release --clean
