@@ -1,0 +1,46 @@
+project_name: gofind
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cli
+    main: ./cmd/gofind
+    binary: gofind
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/Hamed0406/gofind/pkg/version.Version={{.Version}}
+    goos: [ linux, windows ]
+    goarch: [ amd64, arm64 ]
+
+archives:
+  - builds: [ cli ]
+    # zip on Windows, tar.gz elsewhere
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^(feat(\(.+\))?:)'
+    - title: Fixes
+      regexp: '^(fix(\(.+\))?:)'
+    - title: Chore
+      regexp: '^(chore(\(.+\))?:)'
+    - title: Docs
+      regexp: '^(docs(\(.+\))?:)'
+    - title: Tests
+      regexp: '^(test(\(.+\))?:)'
+  filters:
+    exclude:
+      - '^ci:'
+      - '^build:'
+      - '^refactor:'
