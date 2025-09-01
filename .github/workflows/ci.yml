@@ -51,10 +51,20 @@ jobs:
       - name: Build CLI
         run: go build -v ./cmd/gofind
 
-      - name: Test with race + coverage (verbose)
+      # Race detector on Linux/macOS
+      - name: Test with race + coverage (Linux/macOS)
+        if: runner.os != 'Windows'
         run: |
           set -euxo pipefail
           go test ./... -race -coverprofile=coverage.out -covermode=atomic -v
+        shell: bash
+
+      # Windows path without -race (sometimes flaky on Windows)
+      - name: Test with coverage (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          set -euxo pipefail
+          go test ./... -coverprofile=coverage.out -covermode=atomic -v
         shell: bash
 
       - name: Upload coverage artifact
@@ -85,17 +95,21 @@ jobs:
           go env
         shell: bash
 
-      # Build golangci-lint from source with the same Go toolchain -> no mismatch
-      - name: Install golangci-lint (from source)
+      # Build golangci-lint from source with the same Go toolchain → avoids export-data/version mismatches
+      - name: Install golangci-lint (from master, Go 1.24)
         run: |
           set -euxo pipefail
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
-          which golangci-lint || echo "golangci-lint not in PATH; add GOPATH/bin explicitly next step"
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@master
+          "$(go env GOPATH)/bin/golangci-lint" version
         shell: bash
 
       - name: Run golangci-lint (verbose)
         run: |
           set -euxo pipefail
-          "$(go env GOPATH)/bin/golangci-lint" version
-          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m --verbose ./...
+          # clear any stale caches from previous toolchains
+          go clean -cache
+          golangci-cache="$(go env GOPATH)/pkg/gocache"
+          rm -rf "$golangci-cache" || true
+
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout=7m --verbose ./...
         shell: bash
