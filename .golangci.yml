@@ -1,0 +1,48 @@
+run:
+  # keep this aligned with the Go version you install in the lint job
+  go: "1.23"
+  timeout: 5m
+  tests: true
+  # make output more helpful locally too
+  print-issued-lines: true
+  allow-parallel-runners: true
+
+issues:
+  # don’t flood the PR with thousands of style nags
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-use-default: false
+  exclude-rules:
+    # allow long test names & tables in *_test.go
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - cyclop
+        - dupl
+    # allow TODOs
+    - linters:
+        - gocritic
+      text: "commentedOutCode"
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - gosimple
+    - unused
+    - typecheck
+    - gocyclo          # complexity
+    - gofmt            # formatting drift
+    - misspell         # common typos
+  disable:
+    - depguard         # often noisy; can enable later with rules
+
+linters-settings:
+  gocyclo:
+    min-complexity: 20
+  misspell:
+    locale: US
+  gofmt:
+    simplify: true
