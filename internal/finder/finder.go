@@ -44,6 +44,7 @@ type Result struct {
 }
 
 // Run walks and prints entries passing filters; returns count.
+// nolint:gocyclo // TODO: break Run into smaller helpers (filters, walk, print)
 func Run(ctx context.Context, out io.Writer, cfg Config) (int, error) {
 	if cfg.Path == "" {
 		cfg.Path = "."
@@ -209,7 +210,10 @@ func Run(ctx context.Context, out io.Writer, cfg Config) (int, error) {
 		res := Result{Path: path, Size: size, ModTime: mod, IsDir: isDir}
 		switch outMode {
 		case "path":
-			fmt.Fprintln(out, path)
+			if _, werr := fmt.Fprintln(out, path); werr != nil {
+				// best-effort write; ignore error
+				_ = werr
+			}
 		case "ndjson":
 			_ = enc.Encode(res)
 		case "json":
@@ -221,7 +225,7 @@ func Run(ctx context.Context, out io.Writer, cfg Config) (int, error) {
 
 	if err := filepath.WalkDir(cfg.Path, walkFn); err != nil {
 		if err == context.Canceled {
-			// user cancelled; still return what we printed
+			// user canceled; still return what we printed
 			return count, nil
 		}
 		return count, err

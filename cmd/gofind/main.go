@@ -49,7 +49,10 @@ func main() {
 	flag.Parse()
 
 	if showVer {
-		fmt.Fprintf(os.Stdout, "gofind %s\n", version.Version)
+		if _, err := fmt.Fprintf(os.Stdout, "gofind %s\n", version.Version); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "write failed:", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -59,10 +62,14 @@ func main() {
 	if outFile != "" {
 		out, err = os.Create(outFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to open output file: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "failed to open output file: %v\n", err)
 			os.Exit(1)
 		}
-		defer out.Close()
+		defer func() {
+			if cerr := out.Close(); cerr != nil {
+				_, _ = fmt.Fprintln(os.Stderr, "close failed:", cerr)
+			}
+		}()
 	} else {
 		out = os.Stdout
 	}
@@ -70,17 +77,17 @@ func main() {
 	switch {
 	case ndjson:
 		if err := runNDJSON(root, followSL, out); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	case jsonOut:
 		if err := runJSONArray(root, followSL, out, pretty); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	default:
 		if err := runHuman(root, followSL, out); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	}
@@ -142,7 +149,7 @@ func walk(root string, followSL bool, onRow func(Row) error) error {
 
 func runNDJSON(root string, followSL bool, out io.Writer) error {
 	bw := bufio.NewWriter(out)
-	defer bw.Flush()
+	defer func() { _ = bw.Flush() }()
 	enc := json.NewEncoder(bw)
 	return walk(root, followSL, func(r Row) error {
 		return enc.Encode(r) // one JSON object per line
@@ -166,7 +173,7 @@ func runJSONArray(root string, followSL bool, out io.Writer, pretty bool) error 
 
 func runHuman(root string, followSL bool, out io.Writer) error {
 	bw := bufio.NewWriter(out)
-	defer bw.Flush()
+	defer func() { _ = bw.Flush() }()
 	return walk(root, followSL, func(r Row) error {
 		_, _ = fmt.Fprintf(bw, "%12d  %s  %s\n",
 			r.Size, r.ModTime.Format("2006-01-02 15:04:05"), r.Path)
