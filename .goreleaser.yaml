@@ -1,3 +1,5 @@
+version: 2
+
 project_name: gofind
 
 before:
@@ -12,16 +14,19 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w -X github.com/Hamed0406/gofind/pkg/version.Version={{.Version}}
-    goos: [ linux, windows ]
-    goarch: [ amd64, arm64 ]
+    goos: [linux, windows]
+    goarch: [amd64, arm64]
 
 archives:
-  - builds: [ cli ]
-    # zip on Windows, tar.gz elsewhere
+  - id: default
+    ids: [cli]  # which build(s) to archive
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # default formats (Linux will use tar.gz by default)
+    formats: ["tar.gz"]
+    # Override format just for Windows:
     format_overrides:
       - goos: windows
-        format: zip
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+        formats: ["zip"]
 
 checksum:
   name_template: "checksums.txt"
@@ -44,3 +49,4 @@ changelog:
       - '^ci:'
       - '^build:'
       - '^refactor:'
+
