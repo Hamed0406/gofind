@@ -45,6 +45,22 @@ Example:
 gofind --ext .go --name test
 ```
 
+## JSON / NDJSON output
+
+The default output is human-readable. For automation or scripting, use JSON:
+
+```bash
+# Pretty JSON array to stdout
+gofind --root . --json --pretty
+
+# Streaming NDJSON to a file (best for huge trees)
+gofind --root . --ndjson --out results.ndjson
+
+# Follow symlinks and include their targets
+gofind --root /opt --ndjson --follow-symlinks
+
+
+
 ## Testing
 
 ```bash

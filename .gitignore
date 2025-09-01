@@ -38,3 +38,8 @@ vendor/
 
 # ---- GitHub Actions local cache ----
 /.github/workflows/*.tmp
+
+
+# ---  ignore NDJSON output
+
+*.ndjson

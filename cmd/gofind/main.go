@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Hamed0406/gofind/pkg/version"
 )
 
 // Row represents one file or directory entry in the output.
@@ -34,6 +36,7 @@ func main() {
 		pretty   bool
 		outFile  string
 		followSL bool
+		showVer  bool
 	)
 
 	flag.StringVar(&root, "root", ".", "root directory to scan")
@@ -42,7 +45,13 @@ func main() {
 	flag.BoolVar(&pretty, "pretty", false, "pretty-print JSON (with --json)")
 	flag.StringVar(&outFile, "out", "", "write output to file instead of stdout")
 	flag.BoolVar(&followSL, "follow-symlinks", false, "resolve symlinks (store target in symlinkTo)")
+	flag.BoolVar(&showVer, "version", false, "print version and exit")
 	flag.Parse()
+
+	if showVer {
+		fmt.Fprintf(os.Stdout, "gofind %s\n", version.Version)
+		return
+	}
 
 	// Open output
 	var out *os.File
