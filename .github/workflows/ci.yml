@@ -32,9 +32,9 @@ jobs:
         run: |
           go version
           go env
+        shell: bash
 
       - name: Check tidy (must be clean)
-        shell: bash
         run: |
           set -euxo pipefail
           go mod tidy
@@ -43,6 +43,7 @@ jobs:
             git --no-pager diff -- go.mod go.sum
             exit 1
           fi
+        shell: bash
 
       - name: Vet
         run: go vet ./...
@@ -54,6 +55,7 @@ jobs:
         run: |
           set -euxo pipefail
           go test ./... -race -coverprofile=coverage.out -covermode=atomic -v
+        shell: bash
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -62,7 +64,7 @@ jobs:
           path: coverage.out
 
   lint:
-    name: golangci-lint
+    name: golangci-lint (from source)
     runs-on: ubuntu-latest
     env:
       GOLANGCI_LINT_LOG_LEVEL: debug
@@ -71,7 +73,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go (1.24.x to match go.mod)
+      - name: Set up Go (match go.mod)
         uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
@@ -81,10 +83,19 @@ jobs:
         run: |
           go version
           go env
+        shell: bash
 
-      - name: Run golangci-lint (built with Go 1.24)
-        uses: golangci/golangci-lint-action@v6
-        with:
-          # Use a build compiled with Go 1.24 (RC until stable 1.62.0+ drops)
-          version: v1.62.0-rc1
-          args: --timeout=5m --verbose ./...
+      # Build golangci-lint from source with the same Go toolchain -> no mismatch
+      - name: Install golangci-lint (from source)
+        run: |
+          set -euxo pipefail
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
+          which golangci-lint || echo "golangci-lint not in PATH; add GOPATH/bin explicitly next step"
+        shell: bash
+
+      - name: Run golangci-lint (verbose)
+        run: |
+          set -euxo pipefail
+          "$(go env GOPATH)/bin/golangci-lint" version
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m --verbose ./...
+        shell: bash
