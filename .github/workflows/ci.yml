@@ -59,7 +59,7 @@ jobs:
           go test ./... -race -coverprofile=coverage.out -covermode=atomic -v
         shell: bash
 
-      # Windows path without -race (sometimes flaky on Windows)
+      # Windows path without -race
       - name: Test with coverage (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -95,7 +95,6 @@ jobs:
           go env
         shell: bash
 
-      # Build golangci-lint from source with the same Go toolchain → avoids export-data/version mismatches
       - name: Install golangci-lint (from master, Go 1.24)
         run: |
           set -euxo pipefail
@@ -106,10 +105,18 @@ jobs:
       - name: Run golangci-lint (verbose)
         run: |
           set -euxo pipefail
-          # clear any stale caches from previous toolchains
+          # clear Go build cache
           go clean -cache
-          golangci-cache="$(go env GOPATH)/pkg/gocache"
-          rm -rf "$golangci-cache" || true
+
+          # clear Go object cache if present
+          if [ -d "$(go env GOCACHE)" ]; then
+            rm -rf "$(go env GOCACHE)"
+          fi
+
+          # clear golangci-lint cache if present
+          if [ -d "${HOME}/.cache/golangci-lint" ]; then
+            rm -rf "${HOME}/.cache/golangci-lint"
+          fi
 
           "$(go env GOPATH)/bin/golangci-lint" run --timeout=7m --verbose ./...
         shell: bash
