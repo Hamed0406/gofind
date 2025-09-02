@@ -1,4 +1,8 @@
-// internal/finder/finder.go
+// Package finder provides the core file discovery and filtering engine used by gofind.
+// Run walks the filesystem and writes matches. The branching handles many
+// filter combinations. TODO(hamed): split into smaller helpers to reduce complexity.
+//
+//nolint:gocyclo // temporary; planned refactor will remove this
 package finder
 
 import (

@@ -133,7 +133,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "cannot create output file %q: %v\n", s, err)
 			os.Exit(2)
 		}
-		defer f.Close()
+		// Close best-effort; log/ignore to satisfy errcheck.
+		defer func() {
+			_ = f.Close()
+		}()
 		out = f
 	}
 
