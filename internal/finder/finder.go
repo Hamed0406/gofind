@@ -1,4 +1,5 @@
-// internal/finder/finder.go
+// Package finder provides a fast, filterable directory walker with optional
+// streaming JSON output and bounded-concurrency traversal.
 package finder
 
 import (
@@ -16,27 +17,41 @@ import (
 	"time"
 )
 
+// OutputFormat controls how entries are written to the provided writer.
 type OutputFormat int
 
 const (
+	// OutputText writes each matched path as a single line of plain text.
 	OutputText OutputFormat = iota
+	// OutputJSON writes a JSON array (streamed) of Entry values.
 	OutputJSON
 )
 
+// Config holds search options for the directory walk.
 type Config struct {
-	Root          string
-	Extensions    map[string]bool // include only these extensions (empty = all)
-	NameRegex     *regexp.Regexp  // optional name filter
-	MinSize       int64           // bytes, 0 = no min
-	MaxSize       int64           // bytes, 0 = no max
-	After         time.Time       // zero = no lower bound
-	Before        time.Time       // zero = no upper bound
+	// Root is the starting directory.
+	Root string
+	// Extensions, when non-empty, includes only files with these lowercase extensions (e.g. ".go").
+	Extensions map[string]bool
+	// NameRegex, when set, must match the base name (file or directory) to be included.
+	NameRegex *regexp.Regexp
+	// MinSize and MaxSize constrain file sizes in bytes (0 = no bound). Directories are unaffected.
+	MinSize int64
+	MaxSize int64
+	// After and Before filter by modification time (zero value = no bound).
+	After  time.Time
+	Before time.Time
+	// IncludeHidden includes dotfiles on Unix and files with the Windows hidden attribute.
 	IncludeHidden bool
-	MaxDepth      int // -1 unlimited, 0 = only direct children, etc.
-	Concurrency   int // default: NumCPU()
-	OutputFormat  OutputFormat
+	// MaxDepth controls recursion: -1 = unlimited, 0 = only children of root, 1 = one level deeper, etc.
+	MaxDepth int
+	// Concurrency is the max number of concurrent directory workers. <=0 defaults to NumCPU.
+	Concurrency int
+	// OutputFormat selects the output writer format.
+	OutputFormat OutputFormat
 }
 
+// Entry describes a matched filesystem entry (file or directory).
 type Entry struct {
 	Path    string      `json:"path"`
 	Name    string      `json:"name"`
@@ -56,12 +71,14 @@ func (c *Config) validate() error {
 	return nil
 }
 
+// Run executes the search using cfg, writing results to out.
+// It streams output and returns when traversal completes or ctx is canceled.
 func Run(ctx context.Context, out io.Writer, cfg Config) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
 
-	// Writer goroutine (single writer to keep output ordered and safe)
+	// Single writer goroutine to keep output safe and ordered.
 	entryCh := make(chan Entry, 256)
 	writeErr := make(chan error, 1)
 	var wgWriter sync.WaitGroup
@@ -70,7 +87,6 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 		defer wgWriter.Done()
 		switch cfg.OutputFormat {
 		case OutputJSON:
-			// Stream a JSON array
 			if _, err := io.WriteString(out, "["); err != nil {
 				writeErr <- err
 				return
@@ -82,7 +98,6 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 					_, _ = io.WriteString(out, ",")
 				}
 				first = false
-				// enc.Encode adds a newline; that's fine for streaming
 				if err := enc.Encode(e); err != nil {
 					writeErr <- err
 					return
@@ -92,24 +107,21 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 		default:
 			for e := range entryCh {
 				if _, werr := fmt.Fprintln(out, e.Path); werr != nil {
-					// best-effort write; ignore error
+					// best-effort write; ignore error (satisfies errcheck)
 					_ = werr
 				}
 			}
 		}
 	}()
 
-	// Walk with bounded concurrency via a semaphore.
-	type walkReq struct {
-		path  string
-		depth int
-	}
+	// Bounded concurrency via semaphore.
 	sem := make(chan struct{}, cfg.Concurrency)
 	var wg sync.WaitGroup
 
 	var walk func(string, int)
 	walk = func(dir string, depth int) {
 		defer wg.Done()
+
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
@@ -119,7 +131,7 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			// Non-fatal; just skip this subtree.
+			// Non-fatal: skip this subtree.
 			return
 		}
 		for _, de := range entries {
@@ -133,7 +145,6 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 
 			// Hidden?
 			if !cfg.IncludeHidden && isHidden(full, name) {
-				// Skip hidden entries entirely
 				continue
 			}
 
@@ -142,7 +153,7 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 				continue
 			}
 
-			// Emit entry if it matches filters.
+			// Emit when filters match.
 			if matches(&cfg, de, info) {
 				entryCh <- Entry{
 					Path:    full,
@@ -217,7 +228,7 @@ func matches(cfg *Config, de fs.DirEntry, info fs.FileInfo) bool {
 	return true
 }
 
-// tiny helper (avoids importing strings everywhere in this file)
+// stringsToLower is a tiny helper avoiding an extra strings import here.
 func stringsToLower(s string) string {
 	b := []rune(s)
 	for i, r := range b {
