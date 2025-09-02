@@ -28,14 +28,12 @@ func buildCLI(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	// We are already inside cmd/gofind, so build "."
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("go build: %v", err)
 	}
-	// Ensure it exists
 	if _, err := os.Stat(bin); err != nil {
 		t.Fatalf("built binary not found: %v", err)
 	}
@@ -52,6 +50,18 @@ func mk(t *testing.T, dir, rel string, size int) string {
 		t.Fatalf("write: %v", err)
 	}
 	return fp
+}
+
+func TestCLI_VersionFlag(t *testing.T) {
+	bin := buildCLI(t)
+	out, err := exec.Command(bin, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("--version failed: %v; out=%s", err, string(out))
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		t.Fatalf("expected non-empty version string")
+	}
 }
 
 func TestCLI_JSON_Array_and_ExtFilter(t *testing.T) {

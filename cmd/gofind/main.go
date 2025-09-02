@@ -12,10 +12,13 @@ import (
 	"time"
 
 	"github.com/Hamed0406/gofind/internal/finder"
+	"github.com/Hamed0406/gofind/pkg/version"
 )
 
 func main() {
 	var (
+		showVersion = flag.Bool("version", false, "print gofind version and exit")
+
 		root        = flag.String("root", ".", "root directory to search")
 		extsCSV     = flag.String("ext", "", "comma-separated list of file extensions to include (e.g. \".go,.md\")")
 		nameReStr   = flag.String("name-regex", "", "regex to match file/dir names")
@@ -29,6 +32,13 @@ func main() {
 		concurrency = flag.Int("concurrency", runtime.NumCPU(), "number of concurrent directory workers")
 	)
 	flag.Parse()
+
+	// --version: print and exit
+	if *showVersion {
+		// version.Version is set via -ldflags, defaults to "dev"
+		fmt.Println(version.Version)
+		return
+	}
 
 	cfg := finder.Config{
 		Root:          *root,
