@@ -1,3 +1,4 @@
+// internal/finder/finder.go
 package finder
 
 import (
@@ -11,349 +12,218 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
-	"strings"
+	"sync"
 	"time"
+)
 
-	"github.com/Hamed0406/gofind/internal/ignore"
+type OutputFormat int
+
+const (
+	OutputText OutputFormat = iota
+	OutputJSON
 )
 
 type Config struct {
-	Path             string
-	RespectGitignore bool
-	ExtraIgnores     []string
-
-	Exts   []string // normalized to lower with leading dot
-	Name   string   // substring (case-insensitive on Windows)
-	Regex  string   // filename regex
-	Type   string   // f|d|a
-	Hidden bool     // include dotfiles
-
-	Larger  string // e.g. "100M"
-	Smaller string // e.g. "1G"
-	Since   string // e.g. "7d" or "2025-08-01"
-	Output  string // "path" | "json" | "ndjson"
+	Root          string
+	Extensions    map[string]bool // include only these extensions (empty = all)
+	NameRegex     *regexp.Regexp  // optional name filter
+	MinSize       int64           // bytes, 0 = no min
+	MaxSize       int64           // bytes, 0 = no max
+	After         time.Time       // zero = no lower bound
+	Before        time.Time       // zero = no upper bound
+	IncludeHidden bool
+	MaxDepth      int // -1 unlimited, 0 = only direct children, etc.
+	Concurrency   int // default: NumCPU()
+	OutputFormat  OutputFormat
 }
 
-// Result is an entry that matched filters.
-type Result struct {
-	Path    string    `json:"path"`
-	Size    int64     `json:"size"`
-	ModTime time.Time `json:"mod_time"`
-	IsDir   bool      `json:"is_dir"`
+type Entry struct {
+	Path    string      `json:"path"`
+	Name    string      `json:"name"`
+	Size    int64       `json:"size"`
+	Mode    fs.FileMode `json:"mode"`
+	ModTime time.Time   `json:"modTime"`
+	IsDir   bool        `json:"isDir"`
 }
 
-// Run walks and prints entries passing filters; returns count.
-// nolint:gocyclo // TODO: break Run into smaller helpers (filters, walk, print)
-func Run(ctx context.Context, out io.Writer, cfg Config) (int, error) {
-	if cfg.Path == "" {
-		cfg.Path = "."
+func (c *Config) validate() error {
+	if c.Root == "" {
+		return errors.New("root directory is required")
 	}
-	// normalize filters
-	exts := normalizeExts(cfg.Exts)
-	namePat := cfg.Name
+	if c.Concurrency <= 0 {
+		c.Concurrency = runtime.NumCPU()
+	}
+	return nil
+}
 
-	var re *regexp.Regexp
-	if cfg.Regex != "" {
-		rx, err := regexp.Compile(cfg.Regex)
-		if err != nil {
-			return 0, fmt.Errorf("invalid --regex: %w", err)
-		}
-		re = rx
+func Run(ctx context.Context, out io.Writer, cfg Config) error {
+	if err := cfg.validate(); err != nil {
+		return err
 	}
 
-	typ := strings.ToLower(strings.TrimSpace(cfg.Type))
-	if typ == "" {
-		typ = "f"
-	}
-
-	var largerBytes *int64
-	if cfg.Larger != "" {
-		v, err := parseSize(cfg.Larger)
-		if err != nil {
-			return 0, fmt.Errorf("invalid --larger: %w", err)
-		}
-		largerBytes = &v
-	}
-
-	var smallerBytes *int64
-	if cfg.Smaller != "" {
-		v, err := parseSize(cfg.Smaller)
-		if err != nil {
-			return 0, fmt.Errorf("invalid --smaller: %w", err)
-		}
-		smallerBytes = &v
-	}
-
-	var sinceTime *time.Time
-	if cfg.Since != "" {
-		t, err := parseSince(cfg.Since)
-		if err != nil {
-			return 0, fmt.Errorf("invalid --since: %w", err)
-		}
-		sinceTime = &t
-	}
-
-	// small tolerance so boundary mtimes are included
-	var sinceCutoff *time.Time
-	if sinceTime != nil {
-		cut := sinceTime.Add(-2 * time.Second) // epsilon
-		sinceCutoff = &cut
-	}
-
-	outMode := strings.ToLower(strings.TrimSpace(cfg.Output))
-	if outMode == "" {
-		outMode = "path"
-	}
-	if outMode != "path" && outMode != "json" && outMode != "ndjson" {
-		return 0, errors.New("--output must be path|json|ndjson")
-	}
-
-	m, err := ignore.New(ignore.Config{
-		StartPath:        cfg.Path,
-		RespectGitignore: cfg.RespectGitignore,
-		ExtraPatterns:    cfg.ExtraIgnores,
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	var (
-		count   int
-		enc     *json.Encoder
-		results []Result
-	)
-	if outMode == "ndjson" {
-		enc = json.NewEncoder(out)
-	}
-
-	walkFn := func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			// log and continue
-			fmt.Fprintln(os.Stderr, walkErr)
-			return nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
+	// Writer goroutine (single writer to keep output ordered and safe)
+	entryCh := make(chan Entry, 256)
+	writeErr := make(chan error, 1)
+	var wgWriter sync.WaitGroup
+	wgWriter.Add(1)
+	go func() {
+		defer wgWriter.Done()
+		switch cfg.OutputFormat {
+		case OutputJSON:
+			// Stream a JSON array
+			if _, err := io.WriteString(out, "["); err != nil {
+				writeErr <- err
+				return
+			}
+			first := true
+			enc := json.NewEncoder(out)
+			for e := range entryCh {
+				if !first {
+					_, _ = io.WriteString(out, ",")
+				}
+				first = false
+				// enc.Encode adds a newline; that's fine for streaming
+				if err := enc.Encode(e); err != nil {
+					writeErr <- err
+					return
+				}
+			}
+			_, _ = io.WriteString(out, "]")
 		default:
-		}
-
-		isDir := d.IsDir()
-
-		// .gitignore and extra ignores
-		if m.Enabled() && m.Match(path, isDir) {
-			if isDir {
-				return fs.SkipDir
+			for e := range entryCh {
+				if _, werr := fmt.Fprintln(out, e.Path); werr != nil {
+					// best-effort write; ignore error
+					_ = werr
+				}
 			}
-			return nil
 		}
+	}()
 
-		// HIDDEN FILTER FIRST (so we can skip hidden directories)
-		if !cfg.Hidden && isHidden(path, d) {
-			if isDir {
-				return fs.SkipDir
-			}
-			return nil
+	// Walk with bounded concurrency via a semaphore.
+	type walkReq struct {
+		path  string
+		depth int
+	}
+	sem := make(chan struct{}, cfg.Concurrency)
+	var wg sync.WaitGroup
+
+	var walk func(string, int)
+	walk = func(dir string, depth int) {
+		defer wg.Done()
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return
 		}
+		defer func() { <-sem }()
 
-		// type filter
-		if typ == "f" && isDir {
-			return nil
-		}
-		if typ == "d" && !isDir {
-			return nil
-		}
-
-		// name-based filters
-		name := d.Name()
-
-		// extension filter (files only)
-		if !isDir && len(exts) > 0 && !matchExt(name, exts) {
-			return nil
-		}
-
-		// name substring
-		if namePat != "" && !matchName(name, namePat) {
-			return nil
-		}
-
-		// regex on name
-		if re != nil && !re.MatchString(name) {
-			return nil
-		}
-
-		// size/time filters need FileInfo (stat)
-		info, err := d.Info()
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			// if we can't stat, skip
-			return nil
+			// Non-fatal; just skip this subtree.
+			return
 		}
-		size := info.Size()
-		mod := info.ModTime()
-
-		// size filters
-		if largerBytes != nil && !(size > *largerBytes) {
-			return nil
-		}
-		if smallerBytes != nil && !(size < *smallerBytes) {
-			return nil
-		}
-
-		// since filter (modtime >= threshold, with small tolerance)
-		if sinceCutoff != nil && mod.Before(*sinceCutoff) {
-			return nil
-		}
-
-		// Emit
-		res := Result{Path: path, Size: size, ModTime: mod, IsDir: isDir}
-		switch outMode {
-		case "path":
-			if _, werr := fmt.Fprintln(out, path); werr != nil {
-				// best-effort write; ignore error
-				_ = werr
+		for _, de := range entries {
+			select {
+			case <-ctx.Done():
+				return
+			default:
 			}
-		case "ndjson":
-			_ = enc.Encode(res)
-		case "json":
-			results = append(results, res)
+			name := de.Name()
+			full := filepath.Join(dir, name)
+
+			// Hidden?
+			if !cfg.IncludeHidden && isHidden(full, name) {
+				// Skip hidden entries entirely
+				continue
+			}
+
+			info, err := de.Info()
+			if err != nil {
+				continue
+			}
+
+			// Emit entry if it matches filters.
+			if matches(&cfg, de, info) {
+				entryCh <- Entry{
+					Path:    full,
+					Name:    name,
+					Size:    info.Size(),
+					Mode:    info.Mode(),
+					ModTime: info.ModTime(),
+					IsDir:   de.IsDir(),
+				}
+			}
+
+			// Recurse into directories if within depth.
+			if de.IsDir() {
+				if cfg.MaxDepth >= 0 && depth >= cfg.MaxDepth {
+					continue
+				}
+				wg.Add(1)
+				go walk(full, depth+1)
+			}
 		}
-		count++
+	}
+
+	// Kick off
+	wg.Add(1)
+	go walk(cfg.Root, 0)
+	wg.Wait()
+	close(entryCh)
+	wgWriter.Wait()
+
+	select {
+	case err := <-writeErr:
+		return err
+	default:
 		return nil
 	}
-
-	if err := filepath.WalkDir(cfg.Path, walkFn); err != nil {
-		if err == context.Canceled {
-			// user canceled; still return what we printed
-			return count, nil
-		}
-		return count, err
-	}
-
-	if outMode == "json" {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(results); err != nil {
-			return count, err
-		}
-	}
-
-	return count, nil
 }
 
-// --- helpers ---
+func matches(cfg *Config, de fs.DirEntry, info fs.FileInfo) bool {
+	name := info.Name()
 
-func normalizeExts(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(in))
-	for _, e := range in {
-		e = strings.TrimSpace(e)
-		if e == "" {
-			continue
-		}
-		if !strings.HasPrefix(e, ".") {
-			e = "." + e
-		}
-		out = append(out, strings.ToLower(e))
-	}
-	return out
-}
-
-func matchExt(name string, exts []string) bool {
-	low := strings.ToLower(name)
-	for _, e := range exts {
-		if strings.HasSuffix(low, e) {
-			return true
+	// extension filter (files only)
+	if len(cfg.Extensions) > 0 && !de.IsDir() {
+		ext := stringsToLower(filepath.Ext(name))
+		if !cfg.Extensions[ext] {
+			return false
 		}
 	}
-	return false
-}
 
-func matchName(name, needle string) bool {
-	if runtime.GOOS == "windows" {
-		return strings.Contains(strings.ToLower(name), strings.ToLower(needle))
-	}
-	return strings.Contains(name, needle)
-}
-
-// MVP hidden: dotfiles/dirs (Unix). Windows attribute hidden comes later.
-func isHidden(_ string, d fs.DirEntry) bool {
-	n := d.Name()
-	if n == "." || n == ".." {
+	// name regex
+	if cfg.NameRegex != nil && !cfg.NameRegex.MatchString(name) {
 		return false
 	}
-	return strings.HasPrefix(n, ".")
+
+	// size (files only)
+	if !de.IsDir() {
+		if cfg.MinSize > 0 && info.Size() < cfg.MinSize {
+			return false
+		}
+		if cfg.MaxSize > 0 && info.Size() > cfg.MaxSize {
+			return false
+		}
+	}
+
+	// mod time
+	if !cfg.After.IsZero() && info.ModTime().Before(cfg.After) {
+		return false
+	}
+	if !cfg.Before.IsZero() && info.ModTime().After(cfg.Before) {
+		return false
+	}
+
+	return true
 }
 
-// parseSize supports "123", "10K", "100M", "2G" (base 1024).
-func parseSize(s string) (int64, error) {
-	s = strings.TrimSpace(strings.ToUpper(s))
-	if s == "" {
-		return 0, errors.New("empty size")
-	}
-	mult := int64(1)
-	switch {
-	case strings.HasSuffix(s, "K"):
-		mult = 1024
-		s = strings.TrimSuffix(s, "K")
-	case strings.HasSuffix(s, "M"):
-		mult = 1024 * 1024
-		s = strings.TrimSuffix(s, "M")
-	case strings.HasSuffix(s, "G"):
-		mult = 1024 * 1024 * 1024
-		s = strings.TrimSuffix(s, "G")
-	}
-	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return n * mult, nil
-}
-
-// parseSince: "7d", "3h", "15m", "45s" or a date "YYYY-MM-DD" or RFC3339.
-func parseSince(s string) (time.Time, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, errors.New("empty since")
-	}
-
-	// duration forms
-	last := s[len(s)-1]
-	if last == 'd' || last == 'h' || last == 'm' || last == 's' {
-		unit := last
-		num := strings.TrimSpace(s[:len(s)-1])
-		val, err := strconv.ParseFloat(num, 64)
-		if err != nil {
-			return time.Time{}, err
-		}
-		var dur time.Duration
-		switch unit {
-		case 'd':
-			dur = time.Duration(val*24) * time.Hour
-		case 'h':
-			dur = time.Duration(val) * time.Hour
-		case 'm':
-			dur = time.Duration(val) * time.Minute
-		case 's':
-			dur = time.Duration(val) * time.Second
-		}
-		return time.Now().Add(-dur), nil
-	}
-
-	// date form
-	if len(s) == 10 { // YYYY-MM-DD
-		if t, err := time.Parse("2006-01-02", s); err == nil {
-			return t, nil
+// tiny helper (avoids importing strings everywhere in this file)
+func stringsToLower(s string) string {
+	b := []rune(s)
+	for i, r := range b {
+		if 'A' <= r && r <= 'Z' {
+			b[i] = r + ('a' - 'A')
 		}
 	}
-
-	// RFC3339
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
-	}
-
-	return time.Time{}, fmt.Errorf("unrecognized since format: %q", s)
+	return string(b)
 }
