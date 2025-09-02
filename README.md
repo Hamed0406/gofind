@@ -33,7 +33,7 @@ Key flags:
 - `--root` — root directory to scan (default ".").
 - `--json` — emit results as a JSON array.
 - `--ndjson` — emit newline-delimited JSON.
-- `--pretty` — pretty-print JSON (with `--json`).
+- `--pretty` — pretty-print JSON (with `--json` or `--ndjson`).
 - `--out` — write output to a file instead of stdout.
 - `--follow-symlinks` — resolve symlinks and include targets.
 - `--version` — print version and exit.
