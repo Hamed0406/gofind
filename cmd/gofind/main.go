@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"runtime"
@@ -29,6 +30,10 @@ func main() {
 		includeHid  = flag.Bool("include-hidden", false, "include hidden files (Unix dotfiles and Windows hidden attribute)")
 		maxDepth    = flag.Int("max-depth", -1, "maximum directory depth (-1 = unlimited, 0 = only root's direct children)")
 		jsonOut     = flag.Bool("json", false, "stream JSON output instead of plain lines")
+		ndjsonOut   = flag.Bool("ndjson", false, "stream newline-delimited JSON entries")
+		prettyJSON  = flag.Bool("pretty", false, "pretty-print JSON output")
+		outPath     = flag.String("out", "", "write output to this file instead of stdout")
+		followSyms  = flag.Bool("follow-symlinks", false, "follow symlinked directories")
 		concurrency = flag.Int("concurrency", runtime.NumCPU(), "number of concurrent directory workers")
 	)
 	flag.Parse()
@@ -41,11 +46,13 @@ func main() {
 	}
 
 	cfg := finder.Config{
-		Root:          *root,
-		IncludeHidden: *includeHid,
-		MaxDepth:      *maxDepth,
-		Concurrency:   *concurrency,
-		OutputFormat:  finder.OutputText,
+		Root:           *root,
+		IncludeHidden:  *includeHid,
+		MaxDepth:       *maxDepth,
+		Concurrency:    *concurrency,
+		OutputFormat:   finder.OutputText,
+		PrettyJSON:     *prettyJSON,
+		FollowSymlinks: *followSyms,
 	}
 
 	// extensions
@@ -112,9 +119,23 @@ func main() {
 	if *jsonOut {
 		cfg.OutputFormat = finder.OutputJSON
 	}
+	if *ndjsonOut {
+		cfg.OutputFormat = finder.OutputNDJSON
+	}
+
+	var out io.Writer = os.Stdout
+	if s := strings.TrimSpace(*outPath); s != "" {
+		f, err := os.Create(s)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cannot create output file %q: %v\n", s, err)
+			os.Exit(2)
+		}
+		defer f.Close()
+		out = f
+	}
 
 	ctx := context.Background()
-	if err := finder.Run(ctx, os.Stdout, cfg); err != nil {
+	if err := finder.Run(ctx, out, cfg); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

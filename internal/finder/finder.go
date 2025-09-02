@@ -25,6 +25,8 @@ const (
 	OutputText OutputFormat = iota
 	// OutputJSON writes a JSON array (streamed) of Entry values.
 	OutputJSON
+	// OutputNDJSON writes newline-delimited JSON entries.
+	OutputNDJSON
 )
 
 // Config holds search options for the directory walk.
@@ -49,6 +51,10 @@ type Config struct {
 	Concurrency int
 	// OutputFormat selects the output writer format.
 	OutputFormat OutputFormat
+	// PrettyJSON enables indentation for JSON/NDJSON outputs.
+	PrettyJSON bool
+	// FollowSymlinks descends into symlinked directories.
+	FollowSymlinks bool
 }
 
 // Entry describes a matched filesystem entry (file or directory).
@@ -92,18 +98,48 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 				return
 			}
 			first := true
-			enc := json.NewEncoder(out)
 			for e := range entryCh {
 				if !first {
-					_, _ = io.WriteString(out, ",")
+					if cfg.PrettyJSON {
+						_, _ = io.WriteString(out, ",\n")
+					} else {
+						_, _ = io.WriteString(out, ",")
+					}
+				} else if cfg.PrettyJSON {
+					_, _ = io.WriteString(out, "\n")
 				}
 				first = false
+				var b []byte
+				var err error
+				if cfg.PrettyJSON {
+					b, err = json.MarshalIndent(e, "  ", "  ")
+				} else {
+					b, err = json.Marshal(e)
+				}
+				if err != nil {
+					writeErr <- err
+					return
+				}
+				if _, err := out.Write(b); err != nil {
+					writeErr <- err
+					return
+				}
+			}
+			if cfg.PrettyJSON {
+				_, _ = io.WriteString(out, "\n")
+			}
+			_, _ = io.WriteString(out, "]")
+		case OutputNDJSON:
+			enc := json.NewEncoder(out)
+			if cfg.PrettyJSON {
+				enc.SetIndent("", "  ")
+			}
+			for e := range entryCh {
 				if err := enc.Encode(e); err != nil {
 					writeErr <- err
 					return
 				}
 			}
-			_, _ = io.WriteString(out, "]")
 		default:
 			for e := range entryCh {
 				if _, werr := fmt.Fprintln(out, e.Path); werr != nil {
@@ -148,25 +184,35 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 				continue
 			}
 
-			info, err := de.Info()
+			linfo, err := os.Lstat(full)
 			if err != nil {
 				continue
 			}
+			info := linfo
+			isLink := linfo.Mode()&fs.ModeSymlink != 0
+			if isLink && cfg.FollowSymlinks {
+				if ti, err := os.Stat(full); err == nil {
+					info = ti
+				} else {
+					continue
+				}
+			}
+			isDir := info.IsDir()
 
 			// Emit when filters match.
-			if matches(&cfg, de, info) {
+			if matches(&cfg, isDir, info) {
 				entryCh <- Entry{
 					Path:    full,
 					Name:    name,
 					Size:    info.Size(),
 					Mode:    info.Mode(),
 					ModTime: info.ModTime(),
-					IsDir:   de.IsDir(),
+					IsDir:   isDir,
 				}
 			}
 
 			// Recurse into directories if within depth.
-			if de.IsDir() {
+			if isDir {
 				if cfg.MaxDepth >= 0 && depth >= cfg.MaxDepth {
 					continue
 				}
@@ -191,11 +237,11 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 	}
 }
 
-func matches(cfg *Config, de fs.DirEntry, info fs.FileInfo) bool {
+func matches(cfg *Config, isDir bool, info fs.FileInfo) bool {
 	name := info.Name()
 
 	// extension filter (files only)
-	if len(cfg.Extensions) > 0 && !de.IsDir() {
+	if len(cfg.Extensions) > 0 && !isDir {
 		ext := stringsToLower(filepath.Ext(name))
 		if !cfg.Extensions[ext] {
 			return false
@@ -208,7 +254,7 @@ func matches(cfg *Config, de fs.DirEntry, info fs.FileInfo) bool {
 	}
 
 	// size (files only)
-	if !de.IsDir() {
+	if !isDir {
 		if cfg.MinSize > 0 && info.Size() < cfg.MinSize {
 			return false
 		}
