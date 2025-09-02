@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: go test (${{ matrix.os }}, go ${{ matrix.go }})
@@ -51,7 +55,7 @@ jobs:
       - name: Build CLI
         run: go build -v ./cmd/gofind
 
-      # Race detector on Linux/macOS
+      # Race detector on Linux/macOS (more stable there)
       - name: Test with race + coverage (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
@@ -68,13 +72,16 @@ jobs:
         shell: bash
 
       - name: Upload coverage artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.os }}.out
           path: coverage.out
+          if-no-files-found: warn
+          retention-days: 7
 
   lint:
-    name: golangci-lint (from source)
+    name: golangci-lint (v2)
     runs-on: ubuntu-latest
     env:
       GOLANGCI_LINT_LOG_LEVEL: debug
@@ -95,10 +102,12 @@ jobs:
           go env
         shell: bash
 
-      - name: Install golangci-lint (from master, Go 1.24)
+      - name: Install golangci-lint v2
         run: |
           set -euxo pipefail
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@master
+          VER=v2.4.0
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" "${VER}"
           "$(go env GOPATH)/bin/golangci-lint" version
         shell: bash
 
@@ -107,16 +116,13 @@ jobs:
           set -euxo pipefail
           # clear Go build cache
           go clean -cache
-
           # clear Go object cache if present
           if [ -d "$(go env GOCACHE)" ]; then
             rm -rf "$(go env GOCACHE)"
           fi
-
           # clear golangci-lint cache if present
           if [ -d "${HOME}/.cache/golangci-lint" ]; then
             rm -rf "${HOME}/.cache/golangci-lint"
           fi
-
           "$(go env GOPATH)/bin/golangci-lint" run --timeout=7m --verbose ./...
         shell: bash

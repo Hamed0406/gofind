@@ -25,12 +25,19 @@ type cliEntry struct {
 func buildCLI(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "gofind_testbin")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	// We are already inside cmd/gofind, so build "."
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("go build: %v", err)
+	}
+	// Ensure it exists
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatalf("built binary not found: %v", err)
 	}
 	return bin
 }
