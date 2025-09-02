@@ -30,19 +30,18 @@ gofind [flags]
 
 Key flags:
 
-- `-p, --path` — start directory (default ".").
-- `--respect-gitignore` — honor `.gitignore` files (default true).
-- `--ignore` — extra ignore patterns (repeatable).
-- `--ext` — filter by extension (repeatable), e.g. `--ext .go`.
-- `--name` — substring match on filename.
-- `--regex` — regular expression on filename.
-- `--type` — entry type: `f` = files, `d` = dirs, `a` = all (default `f`).
-- `--hidden` — include hidden files.
+- `--root` — root directory to scan (default ".").
+- `--json` — emit results as a JSON array.
+- `--ndjson` — emit newline-delimited JSON.
+- `--pretty` — pretty-print JSON (with `--json`).
+- `--out` — write output to a file instead of stdout.
+- `--follow-symlinks` — resolve symlinks and include targets.
+- `--version` — print version and exit.
 
 Example:
 
 ```bash
-gofind --ext .go --name test
+gofind --root . --json --pretty
 ```
 
 ## JSON / NDJSON output
@@ -59,8 +58,7 @@ gofind --root . --ndjson --out results.ndjson
 # Follow symlinks and include their targets
 gofind --root /opt --ndjson --follow-symlinks
 
-
-
+```
 ## Testing
 
 ```bash
