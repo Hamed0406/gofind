@@ -17,7 +17,6 @@ import (
 	"regexp"
 	"runtime"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -94,11 +93,12 @@ func Run(ctx context.Context, out io.Writer, cfg Config) error {
 		ino uint64
 	}
 	inodeOf := func(fi fs.FileInfo) (inode, bool) {
-		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-			return inode{dev: uint64(st.Dev), ino: uint64(st.Ino)}, true
+		if ino, dev, ok := statFromFileInfo(fi); ok {
+			return inode{dev: dev, ino: ino}, true
 		}
 		return inode{}, false
 	}
+
 	type inodeSet struct {
 		mu sync.Mutex
 		m  map[inode]struct{}
