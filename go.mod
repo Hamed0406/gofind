@@ -1,3 +1,3 @@
 module github.com/Hamed0406/gofind
 
-go 1.24.6
+go 1.22
